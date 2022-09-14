@@ -1,0 +1,107 @@
+	Decoding ESP-NOW Radio Transmission intercepted by HackRF
+
+ESP-NOW uses one of the oldest Wi-Fi modulation versions, 
+Direct-Sequence Spread Spectrum (DSSS) with bitrate of 1Msps.
+
+While this version seems to be outdated, for compatibility with old devices 
+this modulation is used in Access Point Beacons.
+
+For ESP-NOW the DSSS has advantage that it permits higher transmitter power and is 
+less sensitive to interference and noise, so it can work at longer distances.
+
+It is interesting to see the structure of ESP-NOW transmitted signal 
+without using very expensive real-time spectrum analyzer.
+Digitized 8-bit IQ version of such signal can be intercepted by HackRF and saved to a file 
+using hackrf_transfer.exe.
+
+For simplicity only one at a time Wi-fi packet data from such file is treated by the 
+attached decoding Python program 
+decodeWifi_1Mbps_packet.py.
+
+Part of the plot of IQ data for such captured packet is shown on the attached
+zoomed_transmitter_IQ.png.
+It looks complicated, with I and Q components changing in all possible ways.
+However, it is known that the transmitted signal uses DBPSK modulation, 
+which permits to rotate the data phase to remove Imaginary component.
+
+Costas Loop transform, code for which is mostly borrowed from pysdr.org, 
+does the phase rotation in the Python program.
+
+Portion of the result is shown at zoomed_Costas_loop_output.png.
+The imaginary component is significantly reduced, so that it can be discarded.
+
+At transmitter, the signal bits were multiplied by Barker sequence 
+which has length of 11 chips per one bit (or one microsecond).
+To recover transmitter bits before the Barker sequence was applied, 
+it is necessary to correlate Barker code with Costas loop output 
+which has 20 samples per microsecond.
+To make correlation possible, Barker code should be upsampled using factor of 20,
+while Costas loop output upsample factor should be 11.
+
+Upsampling and correlation are performed in the python program. 
+
+Correlation result, part of which is shown on figure zoomedCorrelation.png,
+looks very impressive. 
+The correlation has strong narrow peaks at positions of the bits.
+Up peaks can be assigned bits equal to one, then down peaks correspond to zero bits.
+
+Python file extracts bit array from the peaks.
+After that differential encoding of the bits is reversed.
+
+The result is given to Descrambler to get final bits.
+
+At the start of final bits array there is preamble of 128 ones.
+It may be slightly spoiled at the very beginning, 
+so the real start of data bytes is where the ones end, 
+and two bytes of known Start Frame Delimiter (SFD) begin.
+
+SFD position can be found by correlating first 160 final bits with SFD.
+Part of the final bits array containing SFD is shown on zoomed_descrambledBits_andSFD.png
+
+After the accurate start of non-trivial data is found, 
+the final bit array is transformed to bytes.
+The Python program prints the resulting array of bytes, 
+as well as some values found in this array,
+such as transmitter and receiver Mac addresses, frame type, and available user data.
+
+Payload array is part of bytes array starting at address 8.
+The Payload can be saved to pcap file and examined in minute details by WireShark.
+Necessary minor additions to make proper pcap file can be found on the Web.
+
+The ESP_NOW sends data using Vendor Specific Action Wi-Fi frame. 
+Format of the Payload for this frame is described at
+https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_now.html
+The actual unencrypted ESP_NOW user data 
+start at the address 39 of Payload array and 
+end before last 4 bytes of the Payload.
+
+As can be seen from the text of the Python program, 
+it was tested for one intercepted Access Point beacon,
+and two intercepted ESP_NOW frames.
+The first ESP_NOW frame was sent by transmitter to receiver, 
+and the second ESP_NOW frame was just ACK sent by receiver as reply for the first frame.
+IQ data intercepted by HackRF for both frames are shown at sentDataAndACK_hackRF_IQ.png.
+
+Useful data for this ESP_NOW transfer consisted of array of only 4 bytes "a","b","c",'d".
+At the 1Mbps rate the transmission of 4 bytes should take only 32 microseconds. 
+In reality, as can be seen from sentDataAndACK_hackRF_IQ.png,
+the first frame took about 600 uS, and the ACK took about 300 uS,
+so this minimal ESP_NOW transfer took almost one millisecond.
+
+Python program output for the decoded transmitter frame intercepted by the HackRF is shown here:
+
+len(data)= 23160
+Length of byteArr= 55
+[160 243  10   4 120   1 156 108 208   0  58   1  48 174 164 244  22  60
+ 120  33 132 128  65  16 255 255 255 255 255 255 208 236 127  24 254  52
+  57  19 236 115 221   9  24 254  52   4   1  97  98  99 100 118  44 208
+ 112]
+Length of data Payload= 376 uS
+Number of Payload bytes= 47.0
+destMac= ['0x30' '0xae' '0xa4' '0xf4' '0x16' '0x3c']
+sourcMac= ['0x78' '0x21' '0x84' '0x80' '0x41' '0x10']
+Action frame
+userData= [ 97  98  99 100]
+userData characters= ['a', 'b', 'c', 'd']
+
+
